@@ -1,0 +1,103 @@
+# === Secrets — NEVER COMMIT ===
+# Catch-all for anything looking like an env or credential file
+#.env.example IS tracked (the template).
+.env
+*.env
+env
+env.*
+secrets/
+credentials/
+*.pem
+*.key
+*.crt
+deploy_key
+deploy_key.pub
+id_ed25519
+id_ed25519.pub
+id_rsa
+id_rsa.pub
+
+# === User-edited runtime config ===
+# config.toml.example IS tracked (the template).
+# config.toml is the user's customized copy and may contain
+# personal info (account names, BNPL providers, custom categories).
+config.toml
+
+# === Runtime state & data ===
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+data/
+state/
+logs/
+*.log
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# === uv ===
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# === Testing / coverage ===
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# === Type checking ===
+.mypy_cache/
+.pyright/
+.ruff_cache/
+
+# === Editors & OS ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# === Backups / temp ===
+*.bak
+*.backup
+*.pre-pin
+*.old
+*.tmp
+
+# === Docs build output ===
+docs/_build/
+site/

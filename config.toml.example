@@ -1,0 +1,141 @@
+# ============================================================
+# firefly-iii-agent — user-editable runtime config
+# ============================================================
+# Copy this file to `config.toml` and edit to taste.
+#   cp config.toml.example config.toml
+# Most users only need to change [categories.allowed], [tags], and
+# [liabilities.keywords] to match their own Firefly III setup.
+# ============================================================
+
+
+# ------------------------------------------------------------
+# Categories
+# ------------------------------------------------------------
+# The bot can ONLY assign categories from this list. The LLM is told
+# which ones are valid and picks one. Must match category names in
+# Firefly III exactly (case-insensitive). The bot never auto-creates
+# categories — they must already exist in Firefly III.
+# ------------------------------------------------------------
+
+[categories]
+allowed = [
+    "Food & Beverages",
+    "Groceries",
+    "Transportation",
+    "Shopping",
+    "Entertainment",
+    "Health",
+    "Bills & Utilities",
+    "Subscriptions",
+    "Travel",
+    "Education",
+    "Income",
+    "Other",
+]
+
+
+# ------------------------------------------------------------
+# Tags (suggested by the LLM during parsing)
+# ------------------------------------------------------------
+# Tag groups give the LLM a vocabulary to draw from. Group names
+# are arbitrary and only used to organize the prompt.
+# ------------------------------------------------------------
+
+[tags]
+food          = ["coffee", "breakfast", "lunch", "dinner", "snacks", "drinks"]
+transport     = ["taxi", "rideshare", "bus", "train", "fuel", "parking"]
+shopping      = ["clothing", "electronics", "home-goods", "books"]
+recurring     = ["subscription", "rent", "utilities"]
+context       = ["work", "personal", "reimbursable", "gift"]
+
+
+# ------------------------------------------------------------
+# Currency
+# ------------------------------------------------------------
+# `primary` and `secondary` are shown as currency-toggle buttons in
+# the preview. Use 3-letter ISO codes. `allowed` is the full list
+# of currencies the bot will accept — anything outside this list is
+# rejected at the schema layer.
+# ------------------------------------------------------------
+
+[currencies]
+primary   = "USD"
+secondary = "EUR"
+allowed   = ["USD", "EUR"]
+
+
+# ------------------------------------------------------------
+# BNPL / liability routing
+# ------------------------------------------------------------
+# When any of these keywords appears in the transaction text, the bot
+# routes the transaction to the named LIABILITY account in Firefly III.
+# Account names are matched case-insensitively. The bot resolves names
+# to IDs at startup and refuses to start if any name is missing.
+#
+# Defaults below are for Indonesian users (SpayLater, Kredivo, etc.).
+# Replace with your own BNPL providers or remove entirely if unused.
+# ------------------------------------------------------------
+
+[liabilities.keywords]
+kredivo           = "Account Payable"
+akulaku           = "Account Payable"
+spaylater         = "Account Payable"
+"shopee paylater" = "Account Payable"
+cicilan           = "Account Payable"
+bnpl              = "Account Payable"
+paylater          = "Account Payable"
+
+
+# ------------------------------------------------------------
+# LLM configuration
+# ------------------------------------------------------------
+# `models` is the fallback chain — primary first, then fallbacks
+# tried in order on failure. Each request retries the chain.
+#
+# Tested models that produce reliable structured output:
+#   - openai/gpt-4o-mini      
+#   - openai/gpt-5.4-nano     
+#
+# Free-tier models (e.g. ":free" suffix) usually have rate limits and
+# can produce malformed JSON. Use only if you accept occasional errors.
+# ------------------------------------------------------------
+
+[llm]
+models = [
+    "openai/gpt-5.4-nano",
+    "openai/gpt-4o-mini",
+]
+temperature     = 0.0
+max_tokens      = 800
+timeout_seconds = 30
+
+
+# ------------------------------------------------------------
+# Flow / UX
+# ------------------------------------------------------------
+
+[flow]
+# Show the currency toggle row even when only the primary currency
+# is in use. Set false to hide the toggle when there's nothing to toggle.
+always_show_currency_toggle = true
+
+# How many account buttons to show in the picker (top-N by usage).
+top_accounts_in_keyboard = 3
+
+
+# ------------------------------------------------------------
+# Logging
+# ------------------------------------------------------------
+
+[logging]
+# Log when an unauthorized user tries to send a message (silently
+# dropped at the handler layer; logged for visibility into probes).
+log_unauthorized_attempts = true
+
+# DEBUG-level — log raw LLM responses (useful for prompt engineering,
+# spammy in production).
+log_llm_raw_responses = false
+
+# DEBUG-level — log Firefly III API request bodies (useful for
+# debugging 422s, contains transaction data).
+log_firefly_request_bodies = false

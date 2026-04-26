@@ -1,0 +1,81 @@
+[Unit]
+Description=Firefly III agent — Telegram bot
+Documentation=https://github.com/frostnova0x/firefly-iii-agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=firefly-bot
+Group=firefly-bot
+
+# Working directory and venv
+WorkingDirectory=/opt/firefly-bot/app
+EnvironmentFile=/etc/firefly-bot/env
+
+ExecStart=/opt/firefly-bot/.local/bin/uv run python -m firefly_agent
+
+# Restart on failure but back off if crash-looping
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+# Log to journal
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=firefly-bot
+
+# ============================================================
+# Hardening
+# ============================================================
+
+# No new privileges, even if a setuid binary is exec'd
+NoNewPrivileges=true
+
+# Filesystem: only the directories we genuinely need to write
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/firefly-bot/data /opt/firefly-bot/app/.venv
+
+# Private /tmp namespace
+PrivateTmp=true
+
+# Don't expose other users' processes
+ProtectProc=invisible
+
+# Restrict syscalls and capabilities
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+
+# Memory protections
+MemoryDenyWriteExecute=false  # Python JIT needs this; disable hardening here
+
+# Networking: needs outbound only
+PrivateUsers=true
+PrivateDevices=true
+
+# Ambient/CapabilityBoundingSet — drop all
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# IPC isolation
+PrivateIPC=true
+
+# Prevent creating UNIX domain sockets except for what we need
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Resource limits
+LimitNOFILE=4096
+LimitNPROC=64
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,41 @@
+# Firefly III Agent — docker compose stack
+#
+# This compose file runs JUST THE BOT. You need a separate Firefly III
+# instance running somewhere reachable. See the README for a sample
+# Firefly III docker-compose setup.
+
+services:
+  firefly-bot:
+    build: .
+    image: firefly-iii-agent:latest
+    container_name: firefly-bot
+    restart: unless-stopped
+
+    # All secrets and config come from .env (chmod 600 on the host).
+    # Never commit a real .env to version control.
+    env_file:
+      - .env
+
+    # Mount the SQLite state and the user-edited config.toml as bind mounts
+    # so they survive container rebuilds.
+    volumes:
+      - ./data:/app/data
+      - ./config.toml:/app/config.toml:ro
+
+    # No ports — the bot uses Telegram long-polling (outbound only).
+
+    # Resource limits. Tune to your VPS; defaults are conservative.
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          memory: 64M
+
+    # Logging: cap journal size so the container doesn't fill the disk
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
