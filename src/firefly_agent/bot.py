@@ -131,6 +131,7 @@ async def run_bot(settings: Settings) -> None:
                 allowed_tags=sorted(settings.all_valid_tags),
                 allowed_currencies=settings.toml.currencies.allowed,
                 default_currency=settings.env.default_currency,
+                timezone=settings.env.timezone,
                 tag_groups=settings.toml.tag_groups,
                 http_referer=settings.env.openrouter_http_referer,
                 x_title=settings.env.openrouter_x_title,
