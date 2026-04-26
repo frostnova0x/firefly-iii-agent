@@ -46,6 +46,15 @@ class ParsedTransaction(BaseModel):
     category: str = Field(..., min_length=1)
     tags: list[str] = Field(default_factory=list)
     date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$", description="ISO date YYYY-MM-DD")
+    time: str = Field(
+        "",
+        description=(
+            "Optional time portion in HH:MM:SS format (24h). Empty for "
+            "text inputs. For receipt images, only filled if the receipt "
+            "actually shows a clock time. The bot uses current local time "
+            "when this is empty."
+        ),
+    )
     confidence: Confidence = "medium"
     intent: Intent = Field(
         "regular",
@@ -93,6 +102,37 @@ class ParsedTransaction(BaseModel):
     def parsed_date(self) -> date:
         return datetime.strptime(self.date, "%Y-%m-%d").date()  # noqa: DTZ007
 
+    def to_iso_datetime(self, tz_name: str) -> str:
+        """Return a full ISO 8601 datetime string with timezone offset,
+        suitable for Firefly III's transaction `date` field.
+
+        - Date portion: from self.date (LLM-extracted)
+        - Time portion: from self.time if set (e.g. receipt timestamp),
+          otherwise the bot's current local wall-clock time in tz_name
+        - Timezone: tz_name (an IANA name like "Asia/Jakarta")
+
+        Examples:
+            date="2026-04-25", time="",         tz="Asia/Jakarta"
+              → "2026-04-25T<now>:00+07:00"
+            date="2026-04-24", time="14:30:00", tz="Asia/Jakarta"
+              → "2026-04-24T14:30:00+07:00"
+        """
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(tz_name)
+        if self.time:
+            # LLM extracted a time from a receipt — use it
+            try:
+                t = datetime.strptime(self.time, "%H:%M:%S").time()
+            except ValueError:
+                # Defensive: malformed time → fall back to "now"
+                t = datetime.now(tz).time().replace(microsecond=0)
+        else:
+            # Use current local wall-clock time in user's timezone
+            t = datetime.now(tz).time().replace(microsecond=0)
+        local_dt = datetime.combine(self.parsed_date, t).replace(tzinfo=tz)
+        # Firefly accepts standard ISO 8601, e.g. 2026-04-25T14:30:00+07:00
+        return local_dt.isoformat(timespec="seconds")
+
 
 # ------------------------------------------------------------
 # JSON Schema for OpenRouter structured outputs
@@ -132,6 +172,7 @@ def parsed_transaction_json_schema(
                 "category",
                 "tags",
                 "date",
+                "time",
                 "confidence",
                 "intent",
                 "notes",
@@ -187,6 +228,15 @@ def parsed_transaction_json_schema(
                     "type": "string",
                     "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
                     "description": "YYYY-MM-DD",
+                },
+                "time": {
+                    "type": "string",
+                    "description": (
+                        "MUST BE EMPTY STRING for text-only inputs. For receipt "
+                        "images, fill ONLY if the receipt clearly shows a clock "
+                        "time (printed on the receipt). Format: HH:MM:SS in 24-hour. "
+                        "If the receipt only shows a date, leave empty."
+                    ),
                 },
                 "confidence": {
                     "type": "string",

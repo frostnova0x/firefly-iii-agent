@@ -66,6 +66,11 @@ class EnvSettings(BaseModel):
     default_currency: str = Field("IDR", pattern=r"^[A-Z]{3}$")
     secondary_currency: str = Field("USD", pattern=r"^[A-Z]{3}$")
 
+    # IANA timezone name (e.g. "Asia/Jakarta", "Europe/Berlin", "UTC").
+    # Used to stamp transactions with full ISO 8601 datetime including
+    # offset, so Firefly III stops auto-translating from UTC midnight.
+    timezone: str = Field("UTC", min_length=1, max_length=64)
+
     # --- Runtime behavior ---
     pending_ttl_minutes: int = Field(30, gt=0, le=1440)
     log_level: str = Field("INFO", pattern=r"^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$")
@@ -97,6 +102,25 @@ class EnvSettings(BaseModel):
         if isinstance(v, list):
             return [str(x).strip() for x in v if str(x).strip()]
         raise ValueError(f"expected str or list, got {type(v).__name__}")
+
+    @field_validator("timezone")
+    @classmethod
+    def _validate_timezone(cls, v: str) -> str:
+        """Ensure the timezone string is a valid IANA name.
+
+        Catches typos at startup (e.g. "Asia/Jakata" → fail fast)
+        rather than letting the bot stamp every transaction with
+        a broken offset.
+        """
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+        try:
+            ZoneInfo(v)
+        except ZoneInfoNotFoundError as e:
+            raise ValueError(
+                f"TIMEZONE={v!r} is not a valid IANA timezone. "
+                f"Examples: 'UTC', 'Asia/Jakarta', 'Europe/Berlin'."
+            ) from e
+        return v
 
     @classmethod
     def from_env(cls) -> EnvSettings:

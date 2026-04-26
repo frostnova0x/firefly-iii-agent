@@ -134,6 +134,7 @@ class TestJsonSchema:
             "category",
             "tags",
             "date",
+            "time",
             "confidence",
             "intent",
             "notes",

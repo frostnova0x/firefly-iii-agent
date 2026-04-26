@@ -181,6 +181,16 @@ RULES:
     - NEVER use notes to express uncertainty. Use the confidence field for that.
     - NEVER dump receipt line items in notes. Description summarizes them.
 
+12. Time field:
+    - For TEXT inputs: ALWAYS set time to empty string "".
+      The bot will fill in the current local time when posting.
+    - For RECEIPT IMAGES: only fill time if the receipt CLEARLY shows
+      a clock time (printed on the receipt itself, e.g. "14:30:42").
+      Format: HH:MM:SS in 24-hour. If the receipt only shows a date
+      with no time, leave time empty.
+    - If unsure whether something is a printed time vs. a transaction
+      reference number, leave it empty. Better empty than wrong.
+
 EDGE CASES:
 - If the message is clearly not a transaction (greeting, question),
   still output valid JSON but use confidence="low" and pick best-guess fields.

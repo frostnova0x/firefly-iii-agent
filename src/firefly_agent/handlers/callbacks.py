@@ -325,7 +325,7 @@ async def _on_confirm(
 
         split = TransactionSplit(
             type="withdrawal",
-            date=parsed.parsed_date,
+            date=parsed.to_iso_datetime(services.settings.env.timezone),
             amount=parsed.amount,
             description=parsed.description or f"{destination.name} repayment",
             currency_code=pending.currency,
@@ -356,7 +356,7 @@ async def _on_confirm(
 
         split_kwargs = {
             "type": "withdrawal",
-            "date": parsed.parsed_date,
+            "date": parsed.to_iso_datetime(services.settings.env.timezone),
             "amount": parsed.amount,
             "description": parsed.description,
             "currency_code": pending.currency,
@@ -391,7 +391,7 @@ async def _on_confirm(
 
         split_kwargs = {
             "type": parsed.type,
-            "date": parsed.parsed_date,
+            "date": parsed.to_iso_datetime(services.settings.env.timezone),
             "amount": parsed.amount,
             "description": parsed.description,
             "currency_code": pending.currency,

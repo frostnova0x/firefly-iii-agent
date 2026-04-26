@@ -22,7 +22,14 @@ from telegram.ext import (
 from firefly_agent.config import Settings
 from firefly_agent.firefly import FireflyClient
 from firefly_agent.handlers.callbacks import handle_callback
-from firefly_agent.handlers.commands import cmd_accounts, cmd_cancel, cmd_start, cmd_undo, cmd_yes
+from firefly_agent.handlers.commands import (
+    cmd_accounts,
+    cmd_balance,
+    cmd_cancel,
+    cmd_start,
+    cmd_undo,
+    cmd_yes,
+)
 from firefly_agent.handlers.photo import handle_photo_message
 from firefly_agent.handlers.text import handle_text_message
 from firefly_agent.openrouter import OpenRouterClient
@@ -170,6 +177,7 @@ async def run_bot(settings: Settings) -> None:
         # Every handler is whitelisted. Unauthorized users are silently dropped.
         app.add_handler(CommandHandler("start", require_owner(guard)(cmd_start)))
         app.add_handler(CommandHandler("accounts", require_owner(guard)(cmd_accounts)))
+        app.add_handler(CommandHandler("balance", require_owner(guard)(cmd_balance)))
         app.add_handler(CommandHandler("cancel", require_owner(guard)(cmd_cancel)))
         app.add_handler(CommandHandler("undo", require_owner(guard)(cmd_undo)))
         app.add_handler(CommandHandler("yes", require_owner(guard)(cmd_yes)))

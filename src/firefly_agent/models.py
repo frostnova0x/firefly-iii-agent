@@ -129,7 +129,7 @@ class TransactionSplit(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     type: TransactionType
-    date: datetime | date  # Firefly accepts ISO date or datetime
+    date: datetime | date | str  # ISO 8601 string preferred; datetime/date for back-compat
     amount: Decimal
     description: str
     currency_code: str
@@ -161,9 +161,16 @@ class TransactionSplit(BaseModel):
 
     def to_firefly_json(self) -> dict:
         """Serialize to the exact shape Firefly POST /transactions expects."""
+        # Date can be a pre-formatted ISO string, a datetime, or a date.
+        if isinstance(self.date, str):
+            date_str = self.date
+        elif isinstance(self.date, datetime):
+            date_str = self.date.isoformat()
+        else:  # date
+            date_str = self.date.isoformat()
         payload: dict = {
             "type": self.type,
-            "date": self.date.isoformat() if isinstance(self.date, datetime) else self.date.isoformat(),
+            "date": date_str,
             "amount": str(self.amount),
             "description": self.description,
             "currency_code": self.currency_code,
