@@ -17,6 +17,7 @@ All actions begin with validation:
 
 from __future__ import annotations
 
+import html
 import json
 import logging
 from datetime import UTC, datetime
