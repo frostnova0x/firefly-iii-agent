@@ -137,7 +137,8 @@ class OpenRouterClient:
         allowed_currencies: list[str],
         default_currency: str,
         tag_groups: dict[str, list[str]],
-        http_referer: str = "https://frostnova.moe",
+        timezone: str = "UTC",
+        http_referer: str = "https://github.com/firefly-iii/firefly-iii-agent",
         x_title: str = "firefly-bot",
         timeout_seconds: float = 30.0,
         temperature: float = 0.2,
@@ -156,6 +157,7 @@ class OpenRouterClient:
         self._allowed_currencies = list(allowed_currencies)
         self._default_currency = default_currency
         self._tag_groups = dict(tag_groups)
+        self._timezone = timezone
 
         self._http_referer = http_referer
         self._x_title = x_title
@@ -240,7 +242,14 @@ class OpenRouterClient:
         if text is not None and not text.strip() and not image_bytes:
             raise ValueError("text must not be empty if provided without image")
 
-        today = (now or datetime.now().astimezone()).date()  # noqa: DTZ005
+        # Compute "today" in the user's configured timezone — NOT the
+        # container's system timezone (which is usually UTC and would
+        # cause date-shift bugs at the local-midnight boundary).
+        if now is not None:
+            today = now.date()
+        else:
+            from zoneinfo import ZoneInfo
+            today = datetime.now(ZoneInfo(self._timezone)).date()
         system_prompt = build_system_prompt(
             today=today,
             default_currency=self._default_currency,
