@@ -17,6 +17,7 @@ All actions begin with validation:
 
 from __future__ import annotations
 
+import html
 import json
 import logging
 from datetime import UTC, datetime
@@ -38,6 +39,7 @@ from firefly_agent.formatting import (
     CB_CANCEL,
     CB_CONFIRM,
     CB_CURRENCY,
+    CB_DESTINATION,
     CB_EDIT,
     CB_EDIT_FIELD,
     CB_NOOP,
@@ -46,12 +48,14 @@ from firefly_agent.formatting import (
     build_awaiting_account_keyboard,
     build_awaiting_confirm_keyboard,
     build_edit_submenu_keyboard,
+    build_transfer_destination_keyboard,
     format_cancelled_message,
     format_confirm_message,
     format_error_message,
     format_expired_message,
     format_logged_message,
     format_preview_message,
+    format_transfer_confirm_message,
 )
 from firefly_agent.models import NewTransaction, TransactionSplit
 from firefly_agent.parsed import ParsedTransaction
@@ -103,6 +107,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await _on_currency(query, services, pending, new_currency=arg or "")
     elif action == CB_ACCOUNT:
         await _on_account(query, services, pending, account_id_str=arg or "")
+    elif action == CB_DESTINATION:
+        await _on_destination(query, services, pending, account_id_str=arg or "")
     elif action == CB_CONFIRM:
         await _on_confirm(query, services, pending)
     elif action == CB_BACK:
@@ -199,7 +205,11 @@ async def _on_account(
     *,
     account_id_str: str,
 ) -> None:
-    """User picked the source account → advance to confirm screen."""
+    """User picked the source account.
+
+    For transfers, advance to destination picker.
+    For everything else, advance to confirm screen.
+    """
     if pending.state != "awaiting_account":
         return
 
@@ -209,13 +219,65 @@ async def _on_account(
         log.warning("Non-int account_id in callback: %r", account_id_str)
         return
 
-    # Fetch accounts to validate + display name
     accounts = await services.firefly.list_asset_accounts()
     source = next((a for a in accounts if a.id == account_id), None)
     if source is None:
         await query.answer(text="Unknown account.", show_alert=True)
         return
 
+    parsed = _parsed_from_pending(pending)
+
+    # === Transfer flow: source picked → show destination picker ===
+    if parsed.intent == "transfer":
+        ok = await services.store.advance_to_awaiting_destination(
+            pending.callback_id, source_account_id=account_id
+        )
+        if not ok:
+            await _edit(query, format_expired_message(), reply_markup=None)
+            return
+
+        # Build destination list — same currency as source, exclude source
+        source_currency = (source.currency_code or pending.currency).upper()
+        compatible_dests = [
+            a for a in accounts
+            if a.id != source.id
+            and (a.currency_code or "").upper() == source_currency
+        ]
+        if not compatible_dests:
+            await _edit(
+                query,
+                format_error_message(
+                    f"No other {source_currency} account to transfer to. "
+                    f"Create one in Firefly III first."
+                ),
+                reply_markup=None,
+            )
+            await services.store.delete_pending_transaction(pending.callback_id)
+            return
+
+        # Sort: usage-ranked first, fall back to alphabetical
+        top_usage = await services.store.get_top_accounts(limit=10)
+        used_ids = [u.account_id for u in top_usage]
+        dest_by_id = {a.id: a for a in compatible_dests}
+        ranked: list = [dest_by_id[uid] for uid in used_ids if uid in dest_by_id]
+        used_set = {a.id for a in ranked}
+        unused = [a for a in compatible_dests if a.id not in used_set]
+        unused.sort(key=lambda a: a.name.lower())
+        ranked.extend(unused)
+
+        kb = build_transfer_destination_keyboard(
+            callback_id=pending.callback_id,
+            destinations=ranked,
+        )
+        prompt = (
+            f"🔄 <b>Transfer step 2 of 2</b>\n"
+            f"From: <b>{source.name}</b>\n"
+            f"To: <i>pick destination</i>"
+        )
+        await _edit(query, prompt, reply_markup=kb)
+        return
+
+    # === Normal flow: advance straight to confirm ===
     ok = await services.store.update_pending_to_awaiting_confirm(
         pending.callback_id, source_account_id=account_id
     )
@@ -223,7 +285,6 @@ async def _on_account(
         await _edit(query, format_expired_message(), reply_markup=None)
         return
 
-    # Re-read the row to get the (possibly updated) currency.
     updated = await services.store.get_pending_transaction(pending.callback_id)
     if updated is None:
         await _edit(query, format_expired_message(), reply_markup=None)
@@ -232,16 +293,11 @@ async def _on_account(
     parsed = _parsed_from_pending(updated)
 
     # If transaction currency differs from account currency, we'll book
-    # as foreign_amount. The user doesn't enter the native amount — we
-    # show a best-effort placeholder so they know it'll be converted by
-    # Firefly. Actual conversion rate is Firefly's concern.
+    # as foreign_amount. (Real FX conversion lands in M2.4.)
     foreign_amount = None
     foreign_currency = None
     if updated.currency != (source.currency_code or updated.currency):
-        # We don't have a live FX rate; show the foreign line without an
-        # amount so the user knows conversion will happen.
         foreign_currency = source.currency_code
-        # Heuristic placeholder only for UX — Firefly does the actual math
         foreign_amount = None
 
     confirm_text = format_confirm_message(
@@ -253,6 +309,75 @@ async def _on_account(
     )
     kb = build_awaiting_confirm_keyboard(pending.callback_id)
 
+    await _edit(query, confirm_text, reply_markup=kb)
+
+
+async def _on_destination(
+    query,  # type: ignore[no-untyped-def]
+    services: Services,
+    pending: PendingTransaction,
+    *,
+    account_id_str: str,
+) -> None:
+    """Step 2 of transfer flow: user picked destination → show confirm."""
+    if pending.state != "awaiting_destination":
+        return
+
+    try:
+        dest_id = int(account_id_str)
+    except ValueError:
+        log.warning("Non-int destination_account_id in callback: %r", account_id_str)
+        return
+
+    if pending.source_account_id is None:
+        log.warning("Transfer in awaiting_destination has no source — bug?")
+        await _edit(query, format_expired_message(), reply_markup=None)
+        return
+    if dest_id == pending.source_account_id:
+        await query.answer(
+            text="Destination must differ from source.",
+            show_alert=True,
+        )
+        return
+
+    accounts = await services.firefly.list_asset_accounts()
+    source = next((a for a in accounts if a.id == pending.source_account_id), None)
+    destination = next((a for a in accounts if a.id == dest_id), None)
+    if source is None or destination is None:
+        await _edit(query, format_error_message("Account no longer exists."), reply_markup=None)
+        await services.store.delete_pending_transaction(pending.callback_id)
+        return
+
+    # Same-currency check (M2.3 only supports same-currency transfers;
+    # cross-currency lands in M2.4 with FX support)
+    src_cc = (source.currency_code or "").upper()
+    dst_cc = (destination.currency_code or "").upper()
+    if src_cc != dst_cc:
+        await _edit(
+            query,
+            format_error_message(
+                f"Cross-currency transfer ({src_cc} → {dst_cc}) not supported yet. "
+                f"Coming in M2.4."
+            ),
+            reply_markup=None,
+        )
+        return
+
+    ok = await services.store.advance_destination_to_confirm(
+        pending.callback_id, destination_account_id=dest_id
+    )
+    if not ok:
+        await _edit(query, format_expired_message(), reply_markup=None)
+        return
+
+    parsed = _parsed_from_pending(pending)
+    confirm_text = format_transfer_confirm_message(
+        parsed,
+        selected_currency=pending.currency,
+        source_account=source,
+        destination_account=destination,
+    )
+    kb = build_awaiting_confirm_keyboard(pending.callback_id)
     await _edit(query, confirm_text, reply_markup=kb)
 
 
@@ -271,8 +396,46 @@ async def _on_confirm(
     parsed = _parsed_from_pending(pending)
     bnpl_id = _bnpl_id_from_pending(pending)
     is_repayment = parsed.intent == "repayment"
+    is_transfer = parsed.intent == "transfer"
 
-    if is_repayment:
+    if is_transfer:
+        # Same-currency transfer between two of YOUR asset accounts.
+        # Firefly transaction type: "transfer" (asset ↔ asset).
+        # No category — Firefly transfers don't carry expense categories.
+        if pending.state != "awaiting_confirm":
+            return
+        if pending.source_account_id is None or pending.destination_account_id is None:
+            log.warning("Transfer at confirm with missing src/dst — bug?")
+            return
+
+        accounts = await services.firefly.list_asset_accounts()
+        source = next((a for a in accounts if a.id == pending.source_account_id), None)
+        destination = next(
+            (a for a in accounts if a.id == pending.destination_account_id), None
+        )
+        if source is None or destination is None:
+            await _edit(
+                query,
+                format_error_message("Source or destination account no longer exists."),
+                reply_markup=None,
+            )
+            await services.store.delete_pending_transaction(pending.callback_id)
+            return
+
+        split = TransactionSplit(
+            type="transfer",
+            date=parsed.to_iso_datetime(services.settings.env.timezone),
+            amount=parsed.amount,
+            description=parsed.description or f"Transfer to {destination.name}",
+            currency_code=pending.currency,
+            source_id=source.id,
+            destination_id=destination.id,
+            tags=list(parsed.tags) + ["account-transfer"],
+            notes=parsed.notes or None,
+        )
+        new_tx = NewTransaction(transactions=[split])
+
+    elif is_repayment:
         # BNPL repayment in Firefly's data model:
         # Per Firefly III docs and maintainer guidance, asset → liability
         # movements are MODELED AS WITHDRAWALS, not transfers. Firefly
@@ -445,10 +608,13 @@ async def _on_confirm(
     # Success! Record usage, set last_transaction, delete pending.
     # Skip account_usage for BNPL purchases (source is a liability — not
     # what the asset-keyboard top-N is for). Repayments DO use an asset
-    # source, so we record usage normally.
+    # source, so we record usage normally. Transfers record BOTH source
+    # AND destination — both are real assets the user picked.
     is_bnpl_purchase = bnpl_id is not None and not is_repayment
     if not is_bnpl_purchase:
         await services.store.record_account_use(source.id, source.name)
+    if is_transfer and destination is not None:
+        await services.store.record_account_use(destination.id, destination.name)
     await services.store.set_last_transaction(
         user_id=pending.user_id,
         firefly_transaction_group_id=created.group_id,

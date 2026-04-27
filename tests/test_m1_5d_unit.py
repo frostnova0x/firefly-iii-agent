@@ -200,7 +200,7 @@ class TestSchemaIncludesNewFields:
         assert "intent" in schema["schema"]["required"]
         assert "notes" in schema["schema"]["required"]
         assert schema["schema"]["properties"]["intent"]["enum"] == [
-            "purchase", "repayment", "regular"
+            "purchase", "repayment", "regular", "transfer"
         ]
 
     def test_intent_default_is_regular(self) -> None:

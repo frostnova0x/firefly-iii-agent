@@ -80,11 +80,13 @@ def format_preview_message(
     currency = (selected_currency or parsed.currency).upper()
     amount_str = format_currency(parsed.amount, currency)
 
-    # Type label adapts to BNPL intent for clarity
+    # Type label adapts to intent for clarity
     if parsed.intent == "repayment":
         type_label = "BNPL repayment"
     elif parsed.intent == "purchase":
         type_label = "BNPL purchase"
+    elif parsed.intent == "transfer":
+        type_label = "🔄 Transfer"
     else:
         type_label = "Withdrawal" if parsed.type == "withdrawal" else "Deposit"
 
@@ -143,6 +145,8 @@ def format_confirm_message(
         type_label = "BNPL repayment"
     elif parsed.intent == "purchase":
         type_label = "BNPL purchase"
+    elif parsed.intent == "transfer":
+        type_label = "🔄 Transfer"
     else:
         type_label = "Withdrawal" if parsed.type == "withdrawal" else "Deposit"
 
@@ -182,6 +186,41 @@ def format_confirm_message(
     )
 
 
+def format_transfer_confirm_message(
+    parsed: ParsedTransaction,
+    *,
+    selected_currency: str,
+    source_account: Account,
+    destination_account: Account,
+) -> str:
+    """Confirm message for a same-currency transfer.
+
+    Distinct from the regular confirm because transfers move money
+    between TWO of YOUR accounts — both sides are first-class.
+    """
+    currency = selected_currency.upper()
+    amount_str = format_currency(parsed.amount, currency)
+    src = html.escape(source_account.name)
+    dst = html.escape(destination_account.name)
+
+    notes_part = ""
+    if parsed.notes:
+        notes_part = f"\n📓 <i>{html.escape(parsed.notes)}</i>"
+
+    desc_part = ""
+    if parsed.description and parsed.description.lower() != "transfer":
+        desc_part = f"\n<i>{html.escape(parsed.description)}</i>"
+
+    return (
+        "<b>Confirm transfer?</b>\n"
+        f"<b>🔄 {amount_str}</b>\n"
+        f"<b>{src}</b> → <b>{dst}</b>"
+        f"{desc_part}"
+        f"\n<code>{parsed.date}</code>"
+        f"{notes_part}"
+    )
+
+
 def format_logged_message(firefly_group_id: int, description: str) -> str:
     desc = html.escape(description)
     return f"✅ Logged: {desc}\n<code>Firefly ID: {firefly_group_id}</code>"
@@ -206,6 +245,7 @@ def format_error_message(human_reason: str) -> str:
 # Callback data format:  "{action}:{callback_id}[:{arg}]"
 CB_CURRENCY = "cur"
 CB_ACCOUNT = "acc"
+CB_DESTINATION = "dest"  # transfer flow — picking the destination account
 CB_CONFIRM = "conf"
 CB_BACK = "back"
 CB_CANCEL = "canc"
@@ -259,6 +299,41 @@ def build_awaiting_account_keyboard(
     rows.append(
         [
             InlineKeyboardButton(text="✏️ Edit", callback_data=f"{CB_EDIT}:{callback_id}"),
+            InlineKeyboardButton(text="❌ Cancel", callback_data=f"{CB_CANCEL}:{callback_id}"),
+        ]
+    )
+    return InlineKeyboardMarkup(rows)
+
+
+def build_transfer_destination_keyboard(
+    *,
+    callback_id: str,
+    destinations: list[Account],
+) -> InlineKeyboardMarkup:
+    """Second step of the transfer flow: user picked source, now picks
+    destination. We deliberately omit the currency toggle (it's locked
+    by the source's currency) and use CB_DESTINATION so the dispatcher
+    routes to a different handler than the source picker.
+
+    `destinations` is pre-filtered to:
+      - same currency as the source account
+      - not the source account itself
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+
+    for acc in destinations:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"→ {_account_emoji(acc)} {acc.name}",
+                    callback_data=f"{CB_DESTINATION}:{callback_id}:{acc.id}",
+                )
+            ]
+        )
+
+    rows.append(
+        [
+            InlineKeyboardButton(text="⬅️ Back", callback_data=f"{CB_BACK}:{callback_id}"),
             InlineKeyboardButton(text="❌ Cancel", callback_data=f"{CB_CANCEL}:{callback_id}"),
         ]
     )

@@ -272,7 +272,7 @@ class TestPayloadHelpers:
         pending = PendingTransaction(
             callback_id="x", user_id=1, chat_id=1, message_id=1,
             payload_json=payload, state="awaiting_account",
-            source_account_id=None, currency="IDR",
+            source_account_id=None, destination_account_id=None, currency="IDR",
             created_at="2026-04-25T00:00:00+00:00",
             expires_at="2026-04-25T00:30:00+00:00",
         )
@@ -290,14 +290,14 @@ class TestPayloadHelpers:
         pending_with = PendingTransaction(
             callback_id="x", user_id=1, chat_id=1, message_id=1,
             payload_json=payload_with, state="awaiting_account",
-            source_account_id=None, currency="IDR",
+            source_account_id=None, destination_account_id=None, currency="IDR",
             created_at="2026-04-25T00:00:00+00:00",
             expires_at="2026-04-25T00:30:00+00:00",
         )
         pending_without = PendingTransaction(
             callback_id="y", user_id=1, chat_id=1, message_id=1,
             payload_json=payload_without, state="awaiting_account",
-            source_account_id=None, currency="IDR",
+            source_account_id=None, destination_account_id=None, currency="IDR",
             created_at="2026-04-25T00:00:00+00:00",
             expires_at="2026-04-25T00:30:00+00:00",
         )

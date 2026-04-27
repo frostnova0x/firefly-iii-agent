@@ -159,14 +159,34 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
     # 4. Build and send the preview.
-    # Use the BNPL pre-selected keyboard ONLY for fresh purchases.
-    # Repayments need the normal asset picker (which BCA do you pay from?).
-    is_bnpl_purchase = bnpl_account_id is not None and final_intent != "repayment"
-    if is_bnpl_purchase:
+    # Three flows:
+    #   transfer → source picker, then destination picker (M2.3, same-currency)
+    #   BNPL purchase → liability is pre-selected, single tap
+    #   everything else → normal asset picker
+    if final_intent == "transfer":
+        # Pre-flight: need ≥2 asset accounts in this currency, otherwise
+        # there's nothing to transfer between.
+        all_assets = await services.firefly.list_asset_accounts()
+        compatible = [
+            a for a in all_assets
+            if (a.currency_code or "").upper() == parsed.currency.upper()
+        ]
+        if len(compatible) < 2:
+            await services.store.delete_pending_transaction(cid)
+            await update.message.reply_text(
+                format_error_message(
+                    f"Need at least 2 asset accounts in {parsed.currency} to "
+                    f"do a transfer. You have {len(compatible)}."
+                ),
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        keyboard = await _build_transfer_source_keyboard(services, cid, parsed)
+    elif bnpl_account_id is not None and final_intent != "repayment":
+        # BNPL purchase
         keyboard = await _build_bnpl_keyboard(services, cid, parsed, bnpl_account_id)
     else:
-        # Currency-aware account check: bail with a friendly message if
-        # no asset account in the user's set matches the transaction currency.
+        # Normal flow (regular or BNPL repayment)
         all_assets = await services.firefly.list_asset_accounts()
         compatible = [
             a for a in all_assets
@@ -317,6 +337,58 @@ async def _build_bnpl_keyboard(
         callback_id=callback_id,
         currencies=currencies,
         liability_account=liability,
+    )
+
+
+async def _build_transfer_source_keyboard(
+    services: Services,
+    callback_id: str,
+    parsed: ParsedTransaction,
+):
+    """Step 1 of the transfer flow: pick which account the money LEAVES.
+
+    Same shape as the regular account picker but without the currency
+    toggle (transfer currency is fixed by the LLM-extracted currency,
+    can't toggle mid-flow).
+
+    Filters to asset accounts in the transaction's currency.
+    """
+    asset_accounts = await services.firefly.list_asset_accounts()
+    target_n = services.settings.toml.flow.top_accounts_in_keyboard
+    default_id = services.default_asset_account_id
+
+    valid_ids = {a.id for a in asset_accounts}
+    await services.store.prune_account_usage(valid_ids)
+
+    currency = parsed.currency.upper()
+    compatible = [
+        a for a in asset_accounts
+        if (a.currency_code or "").upper() == currency
+    ]
+
+    top_usage = await services.store.get_top_accounts(limit=target_n)
+    used_ids = [u.account_id for u in top_usage]
+    by_id = {a.id: a for a in compatible}
+
+    ranked: list = []
+    for uid in used_ids:
+        if uid in by_id:
+            ranked.append(by_id[uid])
+
+    if len(ranked) < target_n:
+        used_set = {a.id for a in ranked}
+        unused = [a for a in compatible if a.id not in used_set]
+        unused.sort(key=lambda a: (a.id != default_id, a.name.lower()))
+        for acc in unused:
+            if len(ranked) >= target_n:
+                break
+            ranked.append(acc)
+
+    # No currency toggle — transfers are locked to one currency in M2.3
+    return build_awaiting_account_keyboard(
+        callback_id=callback_id,
+        currencies=[CurrencyButton(code=currency, label=currency, selected=True)],
+        accounts=ranked,
     )
 
 

@@ -58,7 +58,7 @@ log = logging.getLogger(__name__)
 
 # Bumped whenever the schema changes. apply_migrations() runs whatever
 # is needed to bring an existing DB up to this version.
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 
 # ============================================================
@@ -80,8 +80,9 @@ class PendingTransaction:
     chat_id: int
     message_id: int
     payload_json: str
-    state: str  # "awaiting_account" | "awaiting_confirm"
+    state: str  # "awaiting_account" | "awaiting_destination" | "awaiting_confirm"
     source_account_id: int | None
+    destination_account_id: int | None  # only set for transfers
     currency: str  # current selected currency (may change before confirm)
     created_at: str  # ISO 8601 UTC
     expires_at: str  # ISO 8601 UTC
@@ -252,6 +253,17 @@ class StateStore:
             )
             await self._conn.commit()
 
+        # Migration v3 → v4: pending_transactions gains destination_account_id
+        # for transfers (account-to-account moves need TWO accounts, not one).
+        if current < 4:
+            log.info("Applying migration v4: pending_transactions.destination_account_id")
+            await self._conn.executescript(_V4_MIGRATION_SQL)
+            await self._conn.execute(
+                "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
+                (4, _now_iso()),
+            )
+            await self._conn.commit()
+
     # ----- Internal helpers -----
 
     def _require_conn(self) -> aiosqlite.Connection:
@@ -299,13 +311,15 @@ class StateStore:
                 "DELETE FROM pending_transactions WHERE expires_at < ?",
                 (now,),
             )
-            # Insert
+            # Insert. destination_account_id starts NULL; transfers fill it
+            # via update_pending_destination after user picks the dest.
             await conn.execute(
                 """
                 INSERT INTO pending_transactions
                     (callback_id, user_id, chat_id, message_id, payload_json,
-                     state, source_account_id, currency, created_at, expires_at)
-                VALUES (?, ?, ?, ?, ?, 'awaiting_account', NULL, ?, ?, ?)
+                     state, source_account_id, destination_account_id,
+                     currency, created_at, expires_at)
+                VALUES (?, ?, ?, ?, ?, 'awaiting_account', NULL, NULL, ?, ?, ?)
                 """,
                 (
                     callback_id,
@@ -327,7 +341,8 @@ class StateStore:
         cur = await conn.execute(
             """
             SELECT callback_id, user_id, chat_id, message_id, payload_json,
-                   state, source_account_id, currency, created_at, expires_at
+                   state, source_account_id, destination_account_id,
+                   currency, created_at, expires_at
             FROM pending_transactions
             WHERE callback_id = ?
               AND expires_at >= ?
@@ -374,16 +389,66 @@ class StateStore:
             )
             return cur.rowcount > 0
 
+    async def advance_to_awaiting_destination(
+        self,
+        callback_id: str,
+        source_account_id: int,
+    ) -> bool:
+        """Transfer flow: user picked SOURCE; show destination picker next.
+
+        Differs from advance_to_confirm in that it sets state to
+        'awaiting_destination' (a transfer-only intermediate state) and
+        leaves destination_account_id NULL until step 3.
+        """
+        async with self._transaction() as conn:
+            cur = await conn.execute(
+                """
+                UPDATE pending_transactions
+                SET state = 'awaiting_destination',
+                    source_account_id = ?
+                WHERE callback_id = ?
+                  AND state = 'awaiting_account'
+                  AND expires_at >= ?
+                """,
+                (source_account_id, callback_id, _now_iso()),
+            )
+            return cur.rowcount > 0
+
+    async def advance_destination_to_confirm(
+        self,
+        callback_id: str,
+        destination_account_id: int,
+    ) -> bool:
+        """Transfer flow: user picked DESTINATION; advance to confirm."""
+        async with self._transaction() as conn:
+            cur = await conn.execute(
+                """
+                UPDATE pending_transactions
+                SET state = 'awaiting_confirm',
+                    destination_account_id = ?
+                WHERE callback_id = ?
+                  AND state = 'awaiting_destination'
+                  AND expires_at >= ?
+                """,
+                (destination_account_id, callback_id, _now_iso()),
+            )
+            return cur.rowcount > 0
+
     async def update_pending_back_to_awaiting_account(self, callback_id: str) -> bool:
-        """User tapped 'Back' from the confirm screen. Returns True on success."""
+        """User tapped 'Back' from the confirm screen. Returns True on success.
+
+        For transfers, also clears destination_account_id and reverts
+        through the three-state flow.
+        """
         async with self._transaction() as conn:
             cur = await conn.execute(
                 """
                 UPDATE pending_transactions
                 SET state = 'awaiting_account',
-                    source_account_id = NULL
+                    source_account_id = NULL,
+                    destination_account_id = NULL
                 WHERE callback_id = ?
-                  AND state = 'awaiting_confirm'
+                  AND state IN ('awaiting_confirm', 'awaiting_destination')
                   AND expires_at >= ?
                 """,
                 (callback_id, _now_iso()),
@@ -638,7 +703,7 @@ CREATE TABLE IF NOT EXISTS pending_transactions (
     message_id          INTEGER NOT NULL,
     payload_json        TEXT NOT NULL,
     state               TEXT NOT NULL
-        CHECK (state IN ('awaiting_account', 'awaiting_confirm')),
+        CHECK (state IN ('awaiting_account', 'awaiting_destination', 'awaiting_confirm')),
     source_account_id   INTEGER,
     currency            TEXT NOT NULL,
     created_at          TEXT NOT NULL,
@@ -686,6 +751,44 @@ _V3_MIGRATION_SQL = """
 -- backwards-compatible behavior for anything in flight at upgrade time.
 ALTER TABLE edit_mode ADD COLUMN field TEXT NOT NULL DEFAULT 'full'
     CHECK (field IN ('full', 'description', 'merchant', 'tags', 'notes'));
+"""
+
+_V4_MIGRATION_SQL = """
+-- pending_transactions gains:
+--   1. destination_account_id  (transfers need a SECOND account)
+--   2. relaxed CHECK constraint (new state 'awaiting_destination')
+--
+-- SQLite can't modify a CHECK constraint in-place, so we rebuild the table.
+-- Pending rows in flight at upgrade time are preserved verbatim.
+
+CREATE TABLE pending_transactions_new (
+    callback_id              TEXT PRIMARY KEY,
+    user_id                  INTEGER NOT NULL,
+    chat_id                  INTEGER NOT NULL,
+    message_id               INTEGER NOT NULL,
+    payload_json             TEXT NOT NULL,
+    state                    TEXT NOT NULL
+        CHECK (state IN ('awaiting_account', 'awaiting_destination', 'awaiting_confirm')),
+    source_account_id        INTEGER,
+    destination_account_id   INTEGER,
+    currency                 TEXT NOT NULL,
+    created_at               TEXT NOT NULL,
+    expires_at               TEXT NOT NULL
+);
+
+INSERT INTO pending_transactions_new
+    (callback_id, user_id, chat_id, message_id, payload_json, state,
+     source_account_id, destination_account_id, currency, created_at, expires_at)
+SELECT
+    callback_id, user_id, chat_id, message_id, payload_json, state,
+    source_account_id, NULL, currency, created_at, expires_at
+FROM pending_transactions;
+
+DROP TABLE pending_transactions;
+ALTER TABLE pending_transactions_new RENAME TO pending_transactions;
+
+CREATE INDEX IF NOT EXISTS idx_pending_expires ON pending_transactions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_pending_user_id ON pending_transactions(user_id);
 """
 
 

@@ -147,7 +147,7 @@ RULES:
      (e.g., "Groceries" for a Superindo receipt with 30 items, not "Indomie,
      coca cola, kopi, ...")
 
-10. Intent — distinguishes BNPL purchase vs repayment vs everything else:
+10. Intent — what KIND of money movement is this:
     - "purchase"   = a NEW BNPL/installment purchase that CREATES debt
                      (e.g. "bought headset 1mil with spaylater",
                       "kredivo 500k for shoes", "akulaku grocery 200k")
@@ -156,21 +156,34 @@ RULES:
                       "repay akulaku installment", "settle paylater bill")
                      Repayment keywords: "pay", "paid", "repay", "bayar",
                      "settle", "lunas", "cicilan dibayar"
+    - "transfer"   = moving money between two of YOUR OWN accounts.
+                     The KEY signal is mention of TWO accounts (or one
+                     destination implied from context).
+                     (e.g. "transfer 500k from BCA to cash",
+                      "move 200k bca → wallet", "top up cash wallet 100k",
+                      "isi dompet 100k dari BCA", "withdraw 500k cash",
+                      "ATM 200k", "tarik tunai 500k")
+                     Set merchant to the destination account name when
+                     known, or "Cash" / "ATM" / "Wallet" when implied.
     - "regular"    = literally everything else (default; majority of cases)
 
-    Rule of thumb: if a BNPL provider name appears AND the verb implies
-    paying-down (not buying-with), it's "repayment". If the verb implies
-    buying-with (or there's a purchase noun like "bought", "got"), it's
-    "purchase". Otherwise "regular".
+    Rule of thumb:
+    - BNPL provider + "buying" verb → purchase
+    - BNPL provider + "paying" verb → repayment
+    - Money moves between MY accounts (no merchant) → transfer
+    - Has a real merchant (Starbucks, Indomaret, Spotify, ...) → regular
 
     Examples:
     - "coffee 50k at excelso"                  → intent: "regular"
     - "bought headset 1mil spaylater"          → intent: "purchase"
-    - "spaylater 500k shoes"                   → intent: "purchase"  
+    - "spaylater 500k shoes"                   → intent: "purchase"
     - "repay spaylater 1mil"                   → intent: "repayment"
     - "bayar kredivo cicilan 350k"             → intent: "repayment"
     - "salary 15jt"                            → intent: "regular"
-    - "transfer 500k to savings"               → intent: "regular"
+    - "transfer 500k from bca to cash wallet"  → intent: "transfer"
+    - "ATM withdraw 200k"                      → intent: "transfer"
+    - "top up gopay 100k"                      → intent: "transfer"
+    - "tarik tunai 500k bca"                   → intent: "transfer"
 
 11. Notes:
     - For TEXT inputs (this message): set notes to empty string "".

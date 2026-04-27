@@ -30,7 +30,7 @@ Confidence = Literal["high", "medium", "low"]
 # of existing BNPL debt. "regular" is the default (everything that isn't BNPL).
 # The LLM produces this field; the bot cross-checks it against keyword patterns
 # (see bnpl.py).
-Intent = Literal["purchase", "repayment", "regular"]
+Intent = Literal["purchase", "repayment", "regular", "transfer"]
 
 
 class ParsedTransaction(BaseModel):
@@ -244,11 +244,13 @@ def parsed_transaction_json_schema(
                 },
                 "intent": {
                     "type": "string",
-                    "enum": ["purchase", "repayment", "regular"],
+                    "enum": ["purchase", "repayment", "regular", "transfer"],
                     "description": (
                         "purchase = new BNPL purchase (creates debt). "
-                        "repayment = paying down existing BNPL debt (transfer from asset to liability). "
-                        "regular = anything else."
+                        "repayment = paying down existing BNPL debt. "
+                        "transfer = moving money between two of YOUR OWN accounts "
+                        "(e.g. 'transfer 500k from BCA to cash', 'top up wallet 200k'). "
+                        "regular = anything else (default; majority of cases)."
                     ),
                 },
                 "notes": {
