@@ -108,17 +108,23 @@ def detect_repayment_intent(
 def reconcile_intent(
     parsed: ParsedTransaction,
     full_text: str | None = None,
+    *,
+    asset_account_names: list[str] | None = None,
 ) -> str:
-    """Combine LLM-emitted intent with keyword cross-check.
+    """Combine LLM-emitted intent with bot-side validation.
 
-    Returns the final intent: "purchase", "repayment", or "regular".
+    Returns the final intent: "purchase", "repayment", "regular", or "transfer".
 
     Disagreement resolution:
-      - If LLM says "repayment" AND keywords agree → "repayment"
-      - If LLM says "repayment" AND keywords disagree → trust LLM (it has
-        full context the keywords can't capture)
-      - If LLM says "purchase"/"regular" AND keywords say repayment →
-        prefer keywords (LLM may have missed a clear "bayar" / "repay")
+      - LLM says "repayment" AND keywords agree → "repayment"
+      - LLM says "repayment" AND keywords disagree → trust LLM (full context)
+      - LLM says "purchase"/"regular" AND keywords say repayment → "repayment"
+      - LLM says "transfer" → validate against asset_account_names. The
+        message MUST reference at least one of the user's actual asset
+        accounts (other than just "from <source>"). If we can't find any
+        evidence of a second account being mentioned, downgrade to "regular"
+        — this catches "transfer 500k to Joko" (Joko is a person, not an
+        account) and "top up gopay 100k" (when GoPay isn't an account).
       - Otherwise → trust LLM
     """
     llm_intent = parsed.intent
@@ -126,9 +132,52 @@ def reconcile_intent(
 
     if llm_intent == "repayment":
         return "repayment"
-    if kw_says_repayment and llm_intent in ("purchase", "regular"):
-        # Override: the LLM might have classified "repay spaylater 1mil" as
-        # "regular" if it didn't recognize the BNPL pattern. Keywords are
-        # sharper here.
+    if kw_says_repayment and llm_intent in ("purchase", "regular", "transfer"):
         return "repayment"
+
+    if llm_intent == "transfer":
+        # Validate: a real transfer needs the destination to be one of
+        # the user's accounts. Without an account list, we trust the LLM
+        # (no way to validate). With a list, we check.
+        if asset_account_names is None:
+            return "transfer"
+
+        # Build a search corpus from merchant + description + full text
+        haystacks: list[str] = []
+        if parsed.merchant:
+            haystacks.append(parsed.merchant.lower())
+        if parsed.description:
+            haystacks.append(parsed.description.lower())
+        if full_text:
+            haystacks.append(full_text.lower())
+        corpus = " ".join(haystacks)
+
+        # Count how many of the user's account names appear in the message.
+        # We use case-insensitive substring match. Names ≤2 chars are too
+        # short to reliably match (false positives) — skip them.
+        matches = 0
+        for name in asset_account_names:
+            n = name.strip().lower()
+            if len(n) < 3:
+                continue
+            if n in corpus:
+                matches += 1
+            else:
+                # Also check if any "significant token" of the account name
+                # (≥4 chars) appears — handles "BCA savings account" matching
+                # just "bca" in user text
+                for token in n.split():
+                    if len(token) >= 4 and token in corpus:
+                        matches += 1
+                        break
+
+        # A transfer needs ≥1 matching account name in the message. The
+        # source is often implicit ("transfer 500k to cash" only names
+        # destination), so requiring 2 matches would be too strict.
+        # 1 match = "destination is one of my accounts" → trust transfer.
+        # 0 matches = LLM hallucinated a transfer → downgrade.
+        if matches >= 1:
+            return "transfer"
+        return "regular"
+
     return llm_intent

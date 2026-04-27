@@ -22,12 +22,27 @@ def build_system_prompt(
     default_currency: str,
     allowed_categories: list[str],
     tag_groups: dict[str, list[str]],
+    asset_account_names: list[str] | None = None,
 ) -> str:
     cats_fmt = ", ".join(allowed_categories)
     tags_fmt = "\n".join(
         f"  - {group.capitalize().replace('_', ' ')}: {', '.join(tags)}"
         for group, tags in tag_groups.items()
     )
+
+    # Pass the user's actual asset accounts to the LLM so it can recognize
+    # references to them. If a message mentions a name that's NOT in this
+    # list, it's probably an external merchant or person — not a transfer.
+    if asset_account_names:
+        accounts_fmt = ", ".join(f'"{n}"' for n in asset_account_names)
+        accounts_block = (
+            f"\nUSER'S ASSET ACCOUNTS (these are THEIR OWN accounts):\n"
+            f"  {accounts_fmt}\n"
+            f"  → Names that look like these are likely the user's own accounts.\n"
+            f"  → Anything else (a person's name, a store name) is external."
+        )
+    else:
+        accounts_block = ""
 
     return f"""You are a transaction parser for a personal finance bot.
 
@@ -40,7 +55,7 @@ ALLOWED CATEGORIES (pick EXACTLY one, match the spelling):
 TAG TAXONOMY (zero or more, pick only from these groups):
 {tags_fmt}
   - Travel trip tags are free-form, prefixed "trip:" — e.g. "trip:bali-2026"
-
+{accounts_block}
 RULES:
 
 1. type:
@@ -149,41 +164,43 @@ RULES:
 
 10. Intent — what KIND of money movement is this:
     - "purchase"   = a NEW BNPL/installment purchase that CREATES debt
-                     (e.g. "bought headset 1mil with spaylater",
-                      "kredivo 500k for shoes", "akulaku grocery 200k")
+                     (BNPL provider name + buying verb)
     - "repayment"  = PAYING DOWN an existing BNPL debt
-                     (e.g. "paid spaylater 350k", "bayar kredivo 1jt",
-                      "repay akulaku installment", "settle paylater bill")
-                     Repayment keywords: "pay", "paid", "repay", "bayar",
-                     "settle", "lunas", "cicilan dibayar"
-    - "transfer"   = moving money between two of YOUR OWN accounts.
-                     The KEY signal is mention of TWO accounts (or one
-                     destination implied from context).
-                     (e.g. "transfer 500k from BCA to cash",
-                      "move 200k bca → wallet", "top up cash wallet 100k",
-                      "isi dompet 100k dari BCA", "withdraw 500k cash",
-                      "ATM 200k", "tarik tunai 500k")
-                     Set merchant to the destination account name when
-                     known, or "Cash" / "ATM" / "Wallet" when implied.
-    - "regular"    = literally everything else (default; majority of cases)
+                     (BNPL provider name + paying verb: "pay", "paid",
+                      "repay", "bayar", "settle", "lunas")
+    - "transfer"   = moving money between TWO of the user's OWN accounts.
+                     STRICT REQUIREMENT: the message must mention TWO
+                     accounts (a source AND a destination), AND BOTH must
+                     plausibly be user accounts (NOT a person, NOT a store,
+                     NOT a service).
+                     The USER'S ASSET ACCOUNTS list above is your guide —
+                     names that match (or closely resemble) those entries
+                     are the user's own. Anything else is external.
+    - "regular"    = literally everything else (DEFAULT — vast majority).
+                     Includes: paying a person ("transfer 500k to Joko"),
+                     paying a service ("top up gopay" if GoPay isn't in
+                     the user's accounts), buying from a store, salary,
+                     subscriptions, refunds, etc.
 
-    Rule of thumb:
-    - BNPL provider + "buying" verb → purchase
-    - BNPL provider + "paying" verb → repayment
-    - Money moves between MY accounts (no merchant) → transfer
-    - Has a real merchant (Starbucks, Indomaret, Spotify, ...) → regular
+    CRITICAL DISAMBIGUATION:
+    - "transfer 500k to <person>"            → "regular" (NOT transfer!
+                                                a person is an external
+                                                expense, not a user account)
+    - "send 200k to <name>"                  → "regular"
+    - "pay <name> 100k"                      → "regular"
+    - "top up <service>"                     → check the user's accounts:
+                                                if <service> is listed →
+                                                "transfer". If not → "regular".
+                                                When in doubt: "regular".
+    - "transfer X from <A> to <B>" where
+       BOTH A and B match user's accounts    → "transfer"
+    - "withdraw cash <amount>"               → "transfer" ONLY if user has
+                                                a "Cash" account listed.
+                                                Else "regular".
 
-    Examples:
-    - "coffee 50k at excelso"                  → intent: "regular"
-    - "bought headset 1mil spaylater"          → intent: "purchase"
-    - "spaylater 500k shoes"                   → intent: "purchase"
-    - "repay spaylater 1mil"                   → intent: "repayment"
-    - "bayar kredivo cicilan 350k"             → intent: "repayment"
-    - "salary 15jt"                            → intent: "regular"
-    - "transfer 500k from bca to cash wallet"  → intent: "transfer"
-    - "ATM withdraw 200k"                      → intent: "transfer"
-    - "top up gopay 100k"                      → intent: "transfer"
-    - "tarik tunai 500k bca"                   → intent: "transfer"
+    Default is "regular". Set "transfer" only when you're confident BOTH
+    sides are the user's own accounts. The bot will double-check and
+    correct mistakes — your job is to be conservative.
 
 11. Notes:
     - For TEXT inputs (this message): set notes to empty string "".

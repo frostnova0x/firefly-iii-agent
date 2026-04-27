@@ -90,8 +90,20 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     # ============================================================
     await context.bot.send_chat_action(chat_id=chat_id, action="typing")
 
+    # Fetch the user's asset accounts and pass their names into the LLM.
+    # The LLM uses this to distinguish "transfer to MY GoPay" (a real transfer)
+    # from "transfer to Joko" (a person — withdrawal to expense).
     try:
-        parsed = await services.llm.parse_transaction(text=text)
+        asset_accts_for_prompt = await services.firefly.list_asset_accounts()
+        asset_names = [a.name for a in asset_accts_for_prompt]
+    except Exception as e:  # noqa: BLE001
+        log.warning("Couldn't fetch asset accounts for prompt context: %s", e)
+        asset_names = []
+
+    try:
+        parsed = await services.llm.parse_transaction(
+            text=text, asset_account_names=asset_names
+        )
     except OpenRouterAuthError:
         log.error("OpenRouter auth failed — API key invalid")
         await update.message.reply_text(
@@ -128,7 +140,9 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # Cross-check LLM-emitted intent against keywords. The reconciled
     # intent is what we trust going forward.
-    final_intent = reconcile_intent(parsed, full_text=text)
+    final_intent = reconcile_intent(
+        parsed, full_text=text, asset_account_names=asset_names
+    )
     if final_intent != parsed.intent:
         log.info(
             "Intent reconciled: LLM=%s → final=%s (keyword cross-check)",

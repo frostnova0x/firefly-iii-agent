@@ -222,18 +222,22 @@ class OpenRouterClient:
         image_bytes: bytes | None = None,
         image_mime: str = "image/jpeg",
         now: datetime | None = None,
+        asset_account_names: list[str] | None = None,
     ) -> ParsedTransaction:
         """Parse free-form text and/or a receipt image into a ParsedTransaction.
 
         Exactly one of `text` or `image_bytes` must be provided (or both:
         a text hint alongside a receipt photo is valid).
 
+        `asset_account_names` is the user's actual asset-account names from
+        Firefly III, passed in so the LLM can reason about whether a name
+        in the message is the user's own account vs. an external entity.
+        Without this, the LLM has to guess and tends to over-classify
+        transfers.
+
         Tries each model in `models` in order. On success, returns
         immediately. On failure, falls through to the next model. If
         every model fails, raises OpenRouterAllModelsFailedError.
-
-        Phase 1 passes `text` only; Phase 2 will pass `image_bytes` and
-        optionally a text hint like "receipt from yesterday".
         """
         if self._client is None:
             raise RuntimeError("OpenRouterClient not initialized; use `async with`.")
@@ -255,6 +259,7 @@ class OpenRouterClient:
             default_currency=self._default_currency,
             allowed_categories=self._allowed_categories,
             tag_groups=self._tag_groups,
+            asset_account_names=asset_account_names,
         )
 
         # Build user message depending on whether we have an image.

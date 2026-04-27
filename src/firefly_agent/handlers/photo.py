@@ -93,11 +93,20 @@ async def handle_photo_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # 3. Call the LLM
     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+
+    try:
+        asset_accts_for_prompt = await services.firefly.list_asset_accounts()
+        asset_names = [a.name for a in asset_accts_for_prompt]
+    except Exception as e:  # noqa: BLE001
+        log.warning("Couldn't fetch asset accounts for prompt context: %s", e)
+        asset_names = []
+
     try:
         parsed = await services.llm.parse_transaction(
             text=caption if caption else None,
             image_bytes=resized_bytes,
             image_mime=mime,
+            asset_account_names=asset_names,
         )
     except OpenRouterAuthError:
         log.error("OpenRouter auth failed — API key invalid")

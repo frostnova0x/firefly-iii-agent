@@ -51,6 +51,7 @@ from firefly_agent.formatting import (
     build_transfer_destination_keyboard,
     format_cancelled_message,
     format_confirm_message,
+    format_currency,
     format_error_message,
     format_expired_message,
     format_logged_message,
@@ -269,10 +270,15 @@ async def _on_account(
             callback_id=pending.callback_id,
             destinations=ranked,
         )
+        # Show source + amount + clear instruction. The picker buttons
+        # below answer the question implicitly.
+        amount_str = format_currency(parsed.amount, pending.currency)
         prompt = (
-            f"🔄 <b>Transfer step 2 of 2</b>\n"
-            f"From: <b>{source.name}</b>\n"
-            f"To: <i>pick destination</i>"
+            f"🔄 <b>Transfer — step 2 of 2</b>\n"
+            f"From: <b>{html.escape(source.name)}</b>\n"
+            f"\n"
+            f"<b>Where is the {amount_str} going?</b>\n"
+            f"<i>👇 Tap a destination account</i>"
         )
         await _edit(query, prompt, reply_markup=kb)
         return
